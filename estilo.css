@@ -161,3 +161,16 @@
 
   .logo{width:44px;height:44px;object-fit:contain;flex:none}
   .cartao-login .logo{width:60px;height:60px}
+
+  /* ───── Recados e anotações ───── */
+  .recados{margin:14px 20px 0;padding:12px 14px;border-radius:12px;background:#fff4d6;color:#3d2e00;border:1px solid #f2c200}
+  .recados .ajuda{color:#6b5a1e;margin-left:8px}
+  .recados-topo{display:flex;flex-wrap:wrap;align-items:baseline;margin-bottom:6px}
+  .recados .recado{background:#fffaf0;border-color:#ecd48a}
+  .recados .link{color:#7a1d20}
+  .recado{border:1px solid var(--linha);border-radius:8px;padding:8px 10px;margin-top:8px;display:flex;flex-direction:column;gap:4px}
+  .recado small{color:var(--suave)}
+  .recados .recado small{color:#7a6a3a}
+  .recado-form{display:flex;gap:8px;margin-top:10px;align-items:flex-end}
+  .recado-form textarea{flex:1;border:1px solid #ecd48a;background:#fffdf7;color:#1d1a15;border-radius:8px;padding:8px 10px}
+  @media (max-width:700px){ .recados{margin:12px 12px 0} .acoes-topo .btn{padding:6px 10px;font-size:13px} }
