@@ -171,8 +171,7 @@ function telaLogin(modo = "login", msg = null) {
       <label>Senha<input type="password" id="lSenha" autocomplete="current-password" required></label>
       <button class="btn principal grande" type="submit">Entrar</button>
     </form>
-    <div class="links"><button class="link" data-modo="reset">Esqueci minha senha</button>
-      <button class="link" data-modo="sms">Entrar com código no celular</button></div>`;
+    <div class="links"><button class="link" data-modo="reset">Esqueci minha senha</button></div>`;
   else if (modo === "reset") corpo = `
     <h2>Recuperar senha pelo e-mail</h2>
     <form class="form" id="fReset">
@@ -585,7 +584,7 @@ function telaRobo() {
         <h2 style="margin:18px 0 0;font-size:16px">WhatsApp de cada pessoa</h2>
         <div class="rolagem" style="padding:0"><table class="tabela"><thead><tr><th>Nome</th><th>Nível</th><th>WhatsApp com DDD</th></tr></thead><tbody>
           ${pessoas.map(u => `<tr><td>${esc(u.nome)}</td><td>${PAPEIS[u.papel] || ""}</td>
-            <td><input data-contato="${u.uid}" value="${esc(contatos[u.uid] || "")}" placeholder="13 99999-9999" inputmode="tel" style="border:1px solid var(--linha);background:var(--superficie2);border-radius:6px;padding:6px 8px;width:100%;max-width:220px"></td></tr>`).join("")}
+            <td><input data-contato="${u.uid}" value="${esc(mostrarTelefone(contatos[u.uid] || u.telefone || ""))}" placeholder="13 99999-9999" inputmode="tel" style="border:1px solid var(--linha);background:var(--superficie2);border-radius:6px;padding:6px 8px;width:100%;max-width:220px"></td></tr>`).join("")}
         </tbody></table></div>
         <div class="botoes" style="margin-top:6px"><button class="btn principal" type="submit">Salvar configurações</button></div>
         <p class="ajuda">${r.ultimoEnvio ? `Último envio: ${esc(r.ultimoEnvio)}.` : "O robô ainda não enviou nenhuma mensagem."}</p>
@@ -607,15 +606,11 @@ function telaConta() {
         <label>Repita a nova senha<input type="password" id="cNova2" autocomplete="new-password" minlength="6" required></label>
         <button class="btn principal" type="submit">Salvar nova senha</button>
       </form></section>
-    <section class="caixa"><h2>Celular para recuperar o acesso</h2>
-      <p class="ajuda" style="margin-bottom:12px">${temCel ? `Celular cadastrado: <b>${esc(mostrarTelefone(S.perfil.telefone || S.user.phoneNumber))}</b>. Se esquecer a senha, use “Entrar com código no celular” na tela de login.` : "Cadastre seu celular para poder entrar com um código por SMS se esquecer a senha."}</p>
-      ${S.confirmacaoCel ? `
-        <form class="form" id="fCelCodigo" style="max-width:360px">
-          <label>Código recebido por SMS<input id="cCelCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
-          <button class="btn principal" type="submit">Confirmar celular</button></form>` : `
-        <form class="form" id="fCel" style="max-width:360px">
-          <label>${temCel ? "Novo celular" : "Celular"} com DDD<input type="tel" id="cCel" placeholder="13 99999-9999" required></label>
-          <button class="btn principal" type="submit">Enviar código</button></form>`}
+    <section class="caixa"><h2>Seu WhatsApp</h2>
+      <p class="ajuda" style="margin-bottom:12px">${S.perfil.telefone ? `Número cadastrado: <b>${esc(mostrarTelefone(S.perfil.telefone))}</b>. ` : ""}É nesse número que o robô manda os avisos das pastas. Se esquecer a senha, use “Esqueci minha senha” na tela de login: o link chega no seu e-mail.</p>
+      <form class="form" id="fCel" style="max-width:360px">
+        <label>WhatsApp com DDD<input type="tel" id="cCel" placeholder="13 99999-9999" value="${esc(mostrarTelefone(S.perfil.telefone || ""))}" required></label>
+        <button class="btn principal" type="submit">Salvar número</button></form>
     </section></div>`;
 }
 
@@ -635,11 +630,9 @@ function ligarFormularios() {
   if (fCel) fCel.onsubmit = async e => {
     e.preventDefault();
     const tel = telefoneE164($("cCel").value);
-    try {
-      if (S.user.providerData.some(p => p.providerId === "phone")) await unlink(S.user, "phone");
-      S.confirmacaoCel = await linkWithPhoneNumber(S.user, tel, recaptcha());
-      S.telPendente = tel; toast("Enviamos um código por SMS."); desenhar();
-    } catch (err) { zerarRecaptcha(); toast(erroTexto(err)); }
+    if (tel.replace(/\D/g, "").length < 12) { toast("Número inválido. Use DDD e número, por exemplo 13 99999-9999."); return; }
+    try { await updateDoc(doc(db, "users", S.user.uid), { telefone: tel }); toast("WhatsApp salvo."); }
+    catch (err) { toast(erroTexto(err)); }
   };
   const fCelCodigo = $("fCelCodigo");
   if (fCelCodigo) fCelCodigo.onsubmit = async e => {
