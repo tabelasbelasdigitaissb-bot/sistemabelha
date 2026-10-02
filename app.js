@@ -41,7 +41,7 @@ const OPCOES_PRAZO = [7, 10, 15, 20, 30];
 
 /* ───────────────────────── Estado ───────────────────────── */
 const S = {
-  user: null, perfil: null, usuarios: {}, pastas: {}, empresas: {}, prazos: {}, sincronizando: false,
+  user: null, perfil: null, usuarios: {}, pastas: {}, empresas: {}, prazos: {}, sincronizando: false, robo: {},
   rotulos: { prazos: {}, pessoa: {} }, drive: {},
   aba: null, cat: "Todas", filtro: null, busca: "", ordem: { k: "dias", dir: -1 },
   assinaturas: [], batimento: null, recemSms: false, instalando: false, confirmacao: null
@@ -341,6 +341,7 @@ function iniciarPainel() {
     vigiar(collection(db, "empresas"), snap => { S.empresas = paraMapa(snap); pedirDesenho(); vincularPastas(); });
     vigiar(collection(db, "users"), snap => { S.usuarios = paraMapa(snap); pedirDesenho(); });
     vigiar(collection(db, "prazos"), snap => { S.prazos = paraMapa(snap); pedirDesenho(); });
+    vigiar(doc(db, "robo", "config"), snap => { S.robo = snap.exists() ? snap.data() : {}; pedirDesenho(); });
   } else {
     vigiar(query(collection(db, "empresas"), where("responsavelUid", "==", uid)), snap => { S.empresas = paraMapa(snap); pedirDesenho(); });
   }
@@ -354,7 +355,7 @@ let pendente = false;
 const editando = () => {
   const a = document.activeElement;
   if (a && a.closest && a.closest(".grade, .caixa form") && a.matches("input,select,button")) return true;
-  return [...document.querySelectorAll(".caixa form input")].some(i => i.value);
+  return [...document.querySelectorAll("#fNovo input, #fRobo input, #fRobo textarea")].some(i => i.value !== i.defaultValue);
 };
 function pedirDesenho() { if (editando()) { pendente = true; return; } desenhar(); }
 document.addEventListener("focusout", () => setTimeout(() => { if (pendente && !editando()) { pendente = false; desenhar(); } }, 0));
@@ -369,11 +370,11 @@ function desenhar(foco) {
   const online = Object.values(S.usuarios).filter(estaOnline).length;
   const abas = ehAdmin()
     ? [["prazos", `Pastas do Drive${atrasadas ? `<span class="alerta">${atrasadas}</span>` : ""}`],
-       ["divisao", "Divisão por cadastrador"], ["equipe", `Equipe <small style="font-weight:500">(${online} online)</small>`], ["conta", "Minha conta"]]
+       ["divisao", "Divisão por cadastrador"], ["equipe", `Equipe <small style="font-weight:500">(${online} online)</small>`], ["robo", "Robô WhatsApp"], ["conta", "Minha conta"]]
     : [["minhas", "Minhas empresas"], ["conta", "Minha conta"]];
   $("abas").innerHTML = abas.map(([id, t]) => `<button class="secao-btn" role="tab" data-aba="${id}" aria-selected="${S.aba === id}">${t}</button>`).join("");
 
-  const telas = { prazos: telaPrazos, divisao: telaDivisao, equipe: telaEquipe, conta: telaConta, minhas: telaMinhas };
+  const telas = { prazos: telaPrazos, divisao: telaDivisao, equipe: telaEquipe, robo: telaRobo, conta: telaConta, minhas: telaMinhas };
   $("conteudo").innerHTML = (telas[S.aba] || telaConta)();
   ligarFormularios();
   if (foco) focar(foco.g, foco.id, foco.c);
@@ -540,6 +541,56 @@ function telaEquipe() {
     </section></div>`;
 }
 
+/* ───── Robô WhatsApp (só super admin e admin) ───── */
+const MSG_PADRAO = "Oi, {nome}! 🐝 Lembrete do Gestão Abelha: estas pastas precisam de atualização:\n{lista}\nQualquer dúvida, fale com a Carol.";
+function telaRobo() {
+  if (!ehAdmin()) return "";
+  const r = S.robo || {};
+  const contatos = r.contatos || {};
+  const pessoas = Object.entries(S.usuarios).map(([uid, u]) => ({ uid, ...u })).filter(u => u.ativo !== false)
+    .sort((a, b) => ["dono", "admin", "cadastrador"].indexOf(a.papel) - ["dono", "admin", "cadastrador"].indexOf(b.papel) || (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+  const sel = (v, op) => op.map(([k, t]) => `<option value="${k}" ${v === k ? "selected" : ""}>${t}</option>`).join("");
+  const segredo = (id, rotulo, valor, dica) => `<label>${rotulo}<input type="password" id="${id}" value="${esc(valor || "")}" autocomplete="off" placeholder="${dica || ""}"></label>`;
+  return `<div class="painel">
+    <section class="caixa"><h2>Robô de avisos no WhatsApp</h2>
+      <p class="ajuda" style="margin-bottom:14px">Quando uma pasta estiver para vencer ou atrasada, o robô manda uma mensagem no WhatsApp para a cadastradora responsável por ela. Só você e as admins veem e mudam esta tela.</p>
+      <form class="form" id="fRobo">
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="rAtivo" ${r.ativo ? "checked" : ""}> Robô ligado</label>
+        <div class="grade-form">
+          <label>Avisar quantos dias antes de vencer<input type="number" id="rAntes" min="0" max="10" value="${r.diasAntes ?? 2}"></label>
+          <label>Horário do envio<input type="time" id="rHora" value="${esc(r.horario || "08:30")}"></label>
+          <label>Repetir aviso das atrasadas<select id="rRepetir">${sel(r.repetir || "diario", [["diario", "Todo dia"], ["2dias", "A cada 2 dias"], ["nao", "Não repetir"]])}</select></label>
+          <label>Dias de envio<select id="rDias">${sel(r.diasSemana || "seg-sex", [["seg-sex", "Segunda a sexta"], ["seg-sab", "Segunda a sábado"], ["todos", "Todos os dias"]])}</select></label>
+        </div>
+        <label>Mensagem<textarea id="rMsg" rows="4" style="border:1px solid var(--linha);background:var(--superficie2);border-radius:8px;padding:10px 12px">${esc(r.mensagem || MSG_PADRAO)}</textarea></label>
+        <p class="ajuda">Use {nome} para o nome da pessoa e {lista} para a lista de pastas. Com o Gemini ligado, ele escreve a mensagem com as próprias palavras a partir desse modelo.</p>
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="rResumo" ${r.resumoAdmin ? "checked" : ""}> Mandar também um resumo geral para as admins</label>
+
+        <h2 style="margin:18px 0 0;font-size:16px">Conexão do WhatsApp</h2>
+        <div class="grade-form">
+          <label>Serviço<select id="rServico">${sel(r.servico || "", [["", "Escolha…"], ["zapi", "Z-API"], ["evolution", "Evolution API"], ["meta", "WhatsApp Cloud API (Meta)"]])}</select></label>
+          <label>Endereço da API / ID da instância<input id="rUrl" value="${esc(r.url || "")}" autocomplete="off"></label>
+          ${segredo("rToken", "Token", r.token, "")}
+          ${segredo("rToken2", "Client-Token (se o serviço pedir)", r.token2, "")}
+        </div>
+
+        <h2 style="margin:18px 0 0;font-size:16px">Gemini (inteligência artificial)</h2>
+        <div class="grade-form">
+          <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="rUsaGemini" ${r.usarGemini ? "checked" : ""}> Usar o Gemini para escrever as mensagens</label>
+          ${segredo("rGemini", "Chave da API do Gemini", r.geminiKey, "AIza…")}
+        </div>
+
+        <h2 style="margin:18px 0 0;font-size:16px">WhatsApp de cada pessoa</h2>
+        <div class="rolagem" style="padding:0"><table class="tabela"><thead><tr><th>Nome</th><th>Nível</th><th>WhatsApp com DDD</th></tr></thead><tbody>
+          ${pessoas.map(u => `<tr><td>${esc(u.nome)}</td><td>${PAPEIS[u.papel] || ""}</td>
+            <td><input data-contato="${u.uid}" value="${esc(contatos[u.uid] || "")}" placeholder="13 99999-9999" inputmode="tel" style="border:1px solid var(--linha);background:var(--superficie2);border-radius:6px;padding:6px 8px;width:100%;max-width:220px"></td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="botoes" style="margin-top:6px"><button class="btn principal" type="submit">Salvar configurações</button></div>
+        <p class="ajuda">${r.ultimoEnvio ? `Último envio: ${esc(r.ultimoEnvio)}.` : "O robô ainda não enviou nenhuma mensagem."}</p>
+      </form>
+    </section></div>`;
+}
+
 /* ───── Minha conta ───── */
 function telaConta() {
   const temCel = S.user.providerData.some(p => p.providerId === "phone");
@@ -596,6 +647,22 @@ function ligarFormularios() {
       await updateDoc(doc(db, "users", S.user.uid), { telefone: S.telPendente });
       S.confirmacaoCel = null; toast("Celular confirmado."); desenhar();
     } catch (err) { toast(erroTexto(err)); }
+  };
+  const fRobo = $("fRobo");
+  if (fRobo) fRobo.onsubmit = async e => {
+    e.preventDefault();
+    const contatos = {};
+    fRobo.querySelectorAll("[data-contato]").forEach(i => { const t = telefoneE164(i.value); if (t) contatos[i.dataset.contato] = t; });
+    const dados = {
+      ativo: $("rAtivo").checked, diasAntes: Number($("rAntes").value) || 0, horario: $("rHora").value || "08:30",
+      repetir: $("rRepetir").value, diasSemana: $("rDias").value, mensagem: $("rMsg").value.trim() || MSG_PADRAO,
+      resumoAdmin: $("rResumo").checked, servico: $("rServico").value, url: $("rUrl").value.trim(),
+      token: $("rToken").value.trim(), token2: $("rToken2").value.trim(),
+      usarGemini: $("rUsaGemini").checked, geminiKey: $("rGemini").value.trim(),
+      contatos, alteradoPor: S.user.uid, alteradoEm: serverTimestamp()
+    };
+    try { await setDoc(doc(db, "robo", "config"), dados, { merge: true }); fRobo.reset(); toast("Configurações do robô salvas."); desenhar(); }
+    catch (err) { toast(erroTexto(err)); }
   };
   const fNovo = $("fNovo");
   if (fNovo) fNovo.onsubmit = async e => {
