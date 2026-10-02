@@ -39,6 +39,8 @@ const COLS_PESSOA = [
   { k: "obs", l: "OBSERVAÇÃO", t: "texto", w: 190 }
 ];
 const ONLINE_MS = 3 * 60 * 1000;
+// Colunas que o cadastrador preenche na própria grade (o nome da empresa e a divisão continuam com as admins)
+const CAMPOS_CADASTRADOR = ["cadastros", "atualizacao", "movimento", "conferencia", "obs"];
 const OPCOES_PRAZO = [7, 10, 15, 20, 30];
 
 /* ───────────────────────── Estado ───────────────────────── */
@@ -483,12 +485,17 @@ function telaDivisao() {
 function telaMinhas() {
   const minhas = Object.entries(S.empresas).map(([id, e]) => ({ id, ...e })).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   const imoveis = minhas.reduce((t, e) => t + (Number(e.cadastros) || 0), 0);
-  return `<p class="legenda" style="padding-top:16px"><b>Movimento:</b> ALT = alteração, E = entrada de imóvel novo, S = saída (vendido, locado, reservado).</p>
+  grades["minhas"] = { ids: minhas.map(e => e.id), uid: S.user.uid, cadastrador: true };
+  return `<p class="legenda" style="padding-top:16px"><b>Movimento:</b> ALT = alteração, E = entrada de imóvel novo, S = saída (vendido, locado, reservado). Exemplo: <b>s1 e1 alt 4</b>. Preencha o que você fez em cada empresa: salva sozinho.</p>
     <div class="lado-a-lado"><section class="bloco"><div class="bloco-topo"><h2>Minhas empresas</h2><span>${minhas.length} empresas, ${imoveis} imóveis</span></div>
-    ${minhas.length ? grade("minhas", minhas, false) : `<p class="ajuda">Nenhuma empresa foi passada para você ainda.</p>`}</section></div>`;
+    ${minhas.length ? grade("minhas", minhas, "cadastrador") : `<p class="ajuda">Nenhuma empresa foi passada para você ainda.</p>`}</section></div>`;
 }
 
-function grade(g, linhas, editavel, semNova) {
+function grade(g, linhas, modo, semNova) {
+  // modo: true = admin (edita tudo), "cadastrador" = edita só as colunas dele, false = só leitura
+  const soDele = modo === "cadastrador";
+  if (soDele) semNova = true;
+  const editavel = !!modo && !soDele;
   const ro = editavel ? "" : "disabled";
   const largura = 36 + COLS_PESSOA.reduce((t, c) => t + c.w, 0) + (editavel ? 34 : 0);
   const cab = COLS_PESSOA.map(c => `<th style="width:${c.w}px"><div class="cab">
@@ -496,6 +503,8 @@ function grade(g, linhas, editavel, semNova) {
   const celula = (c, ci, e) => {
     const v = c.t === "data" ? br(e[c.k]) : (e[c.k] ?? "");
     const alerta = c.k === "movimento" && /sem tabela|manutenc/.test(norm(e.movimento)) ? "mov-alerta" : "";
+    if (soDele && CAMPOS_CADASTRADOR.includes(c.k)) return `<td class="${c.centro ? "centro" : ""} ${alerta}"><input data-g="${esc(g)}" data-id="${esc(e.id)}" data-c="${ci}" value="${esc(v)}"
+      ${c.t === "data" ? 'placeholder="dd/mm/aaaa" inputmode="numeric"' : c.t === "numero" ? 'inputmode="numeric"' : ""} aria-label="${esc(c.l)} de ${esc(e.nome)}"></td>`;
     if (!editavel && c.k === "nome" && e.link) return `<td><a class="valor" href="${esc(e.link)}" target="_blank" rel="noopener" title="Abrir a pasta no Drive" style="color:inherit">${esc(v)} <span aria-hidden="true">↗</span></a></td>`;
     if (!editavel) return `<td class="${c.centro ? "centro" : ""} ${alerta}"><span class="valor" ${alerta ? 'style="color:var(--vermelho);font-weight:700"' : ""}>${esc(v)}</span></td>`;
     if (c.k === "nome" && e.link) return `<td><div style="display:flex;align-items:center"><input data-g="${esc(g)}" data-id="${esc(e.id)}" data-c="${ci}" value="${esc(v)}" aria-label="${esc(c.l)} de ${esc(e.nome)}" style="flex:1;min-width:0">
@@ -744,6 +753,14 @@ function gravarEmpresa(id, dados) {
   S.empresas[id] = dados;
   return setDoc(doc(db, "empresas", id), dados).catch(err => toast(erroTexto(err)));
 }
+function gravarMeuCampo(id, campos) {
+  const permitido = {};
+  Object.keys(campos).forEach(k => { if (CAMPOS_CADASTRADOR.includes(k)) permitido[k] = campos[k]; });
+  if (!Object.keys(permitido).length) return Promise.resolve();
+  S.empresas[id] = { ...S.empresas[id], ...permitido };
+  return updateDoc(doc(db, "empresas", id), { ...permitido, alteradoPor: S.user.uid, alteradoEm: serverTimestamp() })
+    .catch(err => toast(erroTexto(err)));
+}
 function novoIdEmpresa(nome) {
   let base = slug(nome), id = base, i = 2;
   while (S.empresas[id]) id = `${base}-${i++}`;
@@ -823,9 +840,21 @@ document.addEventListener("change", async e => {
     updateDoc(doc(db, "users", el.dataset.papel), { papel: el.value }).then(() => toast("Nível alterado.")).catch(err => toast(erroTexto(err)));
     return;
   }
-  if (!el.dataset.g || !ehAdmin()) return;
+  if (!el.dataset.g) return;
   const gr = grades[el.dataset.g];
   if (!gr) return;
+  if (gr.cadastrador) {
+    const atual = S.empresas[el.dataset.id];
+    const col = COLS_PESSOA[Number(el.dataset.c)];
+    if (!atual || !col || !CAMPOS_CADASTRADOR.includes(col.k)) return;
+    const v = valor(col, el.value);
+    if (col.t === "data" && el.value.trim() && !v) { toast("Data não reconhecida. Use dd/mm/aaaa."); el.value = br(atual[col.k]); return; }
+    if (col.t === "data") el.value = br(v);
+    gravarMeuCampo(el.dataset.id, { [col.k]: v });
+    pedirDesenho();
+    return;
+  }
+  if (!ehAdmin()) return;
   if (el.dataset.id === "novo") {
     const txt = el.value.trim();
     if (!txt) return;
@@ -848,13 +877,27 @@ document.addEventListener("change", async e => {
 
 document.addEventListener("paste", async e => {
   const el = e.target;
-  if (!el.dataset || !el.dataset.g || !ehAdmin()) return;
+  if (!el.dataset || !el.dataset.g) return;
+  const gr = grades[el.dataset.g];
+  if (!gr || (!gr.cadastrador && !ehAdmin())) return;
   const texto = (e.clipboardData || window.clipboardData).getData("text/plain");
   if (!texto || (!texto.includes("\t") && !texto.replace(/\r?\n$/, "").includes("\n"))) return;
   e.preventDefault();
-  const gr = grades[el.dataset.g];
   const linhas = texto.replace(/\r/g, "").split("\n").filter(l => l.trim() !== "").map(l => l.split("\t"));
   const c0 = Number(el.dataset.c);
+  if (gr.cadastrador) {
+    const r0 = gr.ids.indexOf(el.dataset.id);
+    if (r0 < 0) return;
+    let n = 0;
+    for (let i = 0; i < linhas.length && r0 + i < gr.ids.length; i++) {
+      const campos = {};
+      linhas[i].forEach((t, j) => { const c = COLS_PESSOA[c0 + j]; if (c && CAMPOS_CADASTRADOR.includes(c.k)) campos[c.k] = valor(c, t); });
+      if (Object.keys(campos).length) { await gravarMeuCampo(gr.ids[r0 + i], campos); n++; }
+    }
+    toast(`${n} ${n === 1 ? "linha preenchida" : "linhas preenchidas"}.`);
+    desenhar({ g: el.dataset.g, id: el.dataset.id, c: el.dataset.c });
+    return;
+  }
   if (c0 === 0 && (el.dataset.id === "novo" || linhas.length > 1)) {
     toast(`Colando ${linhas.length} linhas…`);
     await receberEmpresas(gr.uid, linhas);
