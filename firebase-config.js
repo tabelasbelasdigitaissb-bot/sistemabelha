@@ -1,10 +1,9 @@
-// Cole aqui os dados do seu projeto Firebase
-// (Console do Firebase > Configurações do projeto > Seus apps > App da Web > Configuração do SDK)
+// Dados do projeto Firebase gestao-abelha
 export const firebaseConfig = {
-  apiKey: "COLE_AQUI",
-  authDomain: "COLE_AQUI.firebaseapp.com",
-  projectId: "COLE_AQUI",
-  storageBucket: "COLE_AQUI.appspot.com",
-  messagingSenderId: "COLE_AQUI",
-  appId: "COLE_AQUI"
+  apiKey: "AIzaSyA3Prw78BD2oDsK59OZrOchTuYUc9RqQ0E",
+  authDomain: "gestao-abelha-c609e.firebaseapp.com",
+  projectId: "gestao-abelha-c609e",
+  storageBucket: "gestao-abelha-c609e.firebasestorage.app",
+  messagingSenderId: "873806494265",
+  appId: "1:873806494265:web:032a04fbcc550319d8ebe8"
 };
