@@ -337,8 +337,8 @@ function iniciarPainel() {
   const paraMapa = snap => { const m = {}; snap.forEach(d => (m[d.id] = d.data())); return m; };
   if (ehAdmin()) {
     vigiar(doc(db, "config", "drive"), snap => { S.drive = snap.exists() ? snap.data() : {}; pedirDesenho(); });
-    vigiar(collection(db, "pastas"), snap => { S.pastas = paraMapa(snap); pedirDesenho(); });
-    vigiar(collection(db, "empresas"), snap => { S.empresas = paraMapa(snap); pedirDesenho(); });
+    vigiar(collection(db, "pastas"), snap => { S.pastas = paraMapa(snap); pedirDesenho(); vincularPastas(); });
+    vigiar(collection(db, "empresas"), snap => { S.empresas = paraMapa(snap); pedirDesenho(); vincularPastas(); });
     vigiar(collection(db, "users"), snap => { S.usuarios = paraMapa(snap); pedirDesenho(); });
     vigiar(collection(db, "prazos"), snap => { S.prazos = paraMapa(snap); pedirDesenho(); });
   } else {
@@ -487,16 +487,20 @@ function grade(g, linhas, editavel, semNova) {
   const celula = (c, ci, e) => {
     const v = c.t === "data" ? br(e[c.k]) : (e[c.k] ?? "");
     const alerta = c.k === "movimento" && /sem tabela|manutenc/.test(norm(e.movimento)) ? "mov-alerta" : "";
+    if (!editavel && c.k === "nome" && e.link) return `<td><a class="valor" href="${esc(e.link)}" target="_blank" rel="noopener" title="Abrir a pasta no Drive" style="color:inherit">${esc(v)} <span aria-hidden="true">↗</span></a></td>`;
     if (!editavel) return `<td class="${c.centro ? "centro" : ""} ${alerta}"><span class="valor" ${alerta ? 'style="color:var(--vermelho);font-weight:700"' : ""}>${esc(v)}</span></td>`;
+    if (c.k === "nome" && e.link) return `<td><div style="display:flex;align-items:center"><input data-g="${esc(g)}" data-id="${esc(e.id)}" data-c="${ci}" value="${esc(v)}" aria-label="${esc(c.l)} de ${esc(e.nome)}" style="flex:1;min-width:0">
+      <a href="${esc(e.link)}" target="_blank" rel="noopener" title="Abrir a pasta no Drive" style="padding:0 8px;text-decoration:none;color:var(--suave)">↗</a></div></td>`;
     return `<td class="${c.centro ? "centro" : ""} ${alerta}"><input data-g="${esc(g)}" data-id="${esc(e.id)}" data-c="${ci}" value="${esc(v)}" ${ro}
       ${c.t === "data" ? 'placeholder="dd/mm/aaaa" inputmode="numeric"' : c.t === "numero" ? 'inputmode="numeric"' : ""} aria-label="${esc(c.l)} de ${esc(e.nome)}"></td>`;
   };
   const corpo = linhas.map((e, r) => `<tr><td class="num-linha">${r + 1}</td>${COLS_PESSOA.map((c, ci) => celula(c, ci, e)).join("")}
       ${editavel ? `<td class="apagar"><button data-acao="apagarEmpresa" data-id="${esc(e.id)}" title="Apagar linha" aria-label="Apagar ${esc(e.nome)}">×</button></td>` : ""}</tr>`).join("");
   const nova = editavel && !semNova ? `<tr class="novo"><td class="num-linha">+</td>
-      <td><input data-g="${esc(g)}" data-id="novo" data-c="0" placeholder="Nova empresa ou colar aqui" aria-label="Nova empresa"></td>
+      <td><input data-g="${esc(g)}" data-id="novo" data-c="0" placeholder="Nova empresa ou colar aqui" aria-label="Nova empresa" list="lista-pastas"></td>
       ${COLS_PESSOA.slice(1).map(() => "<td></td>").join("")}<td></td></tr>` : "";
-  return `<table class="grade" style="width:${largura}px"><thead><tr><th style="width:36px"></th>${cab}${editavel ? '<th style="width:34px"></th>' : ""}</tr></thead>
+  const lista = editavel && !semNova ? `<datalist id="lista-pastas">${Object.values(S.pastas).map(p => `<option value="${esc(p.nome)}">`).join("")}</datalist>` : "";
+  return `${lista}<table class="grade" style="width:${largura}px"><thead><tr><th style="width:36px"></th>${cab}${editavel ? '<th style="width:34px"></th>' : ""}</tr></thead>
     <tbody>${corpo}${nova}</tbody></table>`;
 }
 
@@ -627,12 +631,36 @@ function valor(col, txt) {
   if (col.t === "numero") return lerCadastros(txt);
   return String(txt ?? "").trim();
 }
+// Liga cada empresa à pasta do Drive com o mesmo nome (ignora "- Imob", "- Construtora" etc.)
+const chaveNome = s => norm(s).replace(/\s*[-–—]\s*(imob|imobiliaria|imobiliarias|construtora|construtoras|constr|invest|investidor|investidores)\b.*$/, "").trim();
+function acharPasta(nome) {
+  const k = chaveNome(nome);
+  if (!k) return null;
+  const todas = Object.values(S.pastas);
+  return todas.find(p => chaveNome(p.nome) === k || chaveNome(p.nomeDrive) === k)
+    || todas.find(p => chaveNome(p.nome).startsWith(k + " ")) || null;
+}
+let vinculando = false;
+async function vincularPastas() {
+  if (!ehAdmin() || vinculando || !Object.keys(S.pastas).length) return;
+  vinculando = true;
+  try {
+    for (const [id, e] of Object.entries(S.empresas)) {
+      const p = acharPasta(e.nome);
+      const link = p ? p.link : "";
+      if ((e.link || "") !== link) await gravarEmpresa(id, { ...e, link, driveId: p ? p.driveId : "" });
+    }
+  } finally { vinculando = false; }
+}
+
 async function receberEmpresas(uid, linhas) {
   let novas = 0, movidas = 0;
   for (const cel of linhas) {
     if (!cel[0] || !cel[0].trim() || ehCabecalho(cel[0])) continue;
     const campos = {};
     cel.forEach((t, j) => { const c = COLS_PESSOA[j]; if (c) campos[c.k] = valor(c, t); });
+    const pasta = acharPasta(campos.nome);
+    if (pasta) { campos.link = pasta.link; campos.driveId = pasta.driveId; }
     const id = Object.keys(S.empresas).find(k => norm(S.empresas[k].nome) === norm(campos.nome));
     if (id) {
       if (S.empresas[id].responsavelUid !== uid) movidas++;
