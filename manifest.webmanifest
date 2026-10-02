@@ -1,0 +1,16 @@
+{
+  "name": "Gestão Abelha",
+  "short_name": "Abelha",
+  "description": "Pastas do Drive, divisão de empresas e equipe do Sistema Abelha",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#191714",
+  "theme_color": "#f2c200",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
