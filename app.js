@@ -402,7 +402,7 @@ function telaPrazos() {
   const base = todas.filter(p => S.cat === "Todas" || p.categoria === S.cat);
   const termo = norm(S.busca);
   const { k, dir } = S.ordem;
-  const chave = p => k === "dias" ? (p.dias ?? -1) : k === "prazo" ? prazoDe(p) : k === "situacao" ? ORDEM[p.status] : k === "ultimaMexida" ? (p.ultimaMexida || "") : norm(p[k]);
+  const chave = p => k === "dias" ? (p.dias ?? 99999) : k === "prazo" ? prazoDe(p) : k === "situacao" ? ORDEM[p.status] : k === "ultimaMexida" ? (p.ultimaMexida || "") : norm(p[k]);
   const linhas = base.filter(p => !S.filtro || p.status === S.filtro).filter(p => !termo || norm(p.nome).includes(termo))
     .sort((a, b) => { const x = chave(a), y = chave(b); return (x < y ? -1 : x > y ? 1 : 0) * dir || a.nome.localeCompare(b.nome, "pt-BR"); });
 
