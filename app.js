@@ -342,7 +342,11 @@ function iniciarPainel() {
 
 /* ───────────────────────── Desenho ───────────────────────── */
 let pendente = false;
-const editando = () => { const a = document.activeElement; return !!(a && a.closest && a.closest(".grade, .caixa form") && a.matches("input,select")); };
+const editando = () => {
+  const a = document.activeElement;
+  if (a && a.closest && a.closest(".grade, .caixa form") && a.matches("input,select,button")) return true;
+  return [...document.querySelectorAll(".caixa form input")].some(i => i.value);
+};
 function pedirDesenho() { if (editando()) { pendente = true; return; } desenhar(); }
 document.addEventListener("focusout", () => setTimeout(() => { if (pendente && !editando()) { pendente = false; desenhar(); } }, 0));
 
