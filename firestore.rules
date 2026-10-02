@@ -1,0 +1,63 @@
+rules_version = '2';
+
+// Níveis: dono (acima de todos) > admin (super admin, ex.: Carol) > cadastrador (só vê as próprias empresas)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function logado() { return request.auth != null; }
+    function caminhoPerfil() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function temPerfil() { return logado() && exists(caminhoPerfil()); }
+    function perfil() { return get(caminhoPerfil()).data; }
+    function ativo() { return temPerfil() && perfil().ativo == true; }
+    function ehAdmin() { return ativo() && perfil().papel in ['admin', 'dono']; }
+    function ehDono() { return ativo() && perfil().papel == 'dono'; }
+    function instalacao() { return /databases/$(database)/documents/config/instalacao; }
+
+    // Pessoas
+    match /users/{uid} {
+      allow read: if (logado() && request.auth.uid == uid) || ehAdmin();
+
+      // Primeiro acesso: cria o dono uma única vez (junto com config/instalacao)
+      allow create: if logado() && request.auth.uid == uid
+                    && request.resource.data.papel == 'dono'
+                    && !exists(instalacao()) && existsAfter(instalacao());
+
+      // Dono cria qualquer nível, menos outro dono; admin cria só cadastrador
+      allow create: if (ehDono() && request.resource.data.papel in ['admin', 'cadastrador'])
+                    || (ehAdmin() && request.resource.data.papel == 'cadastrador');
+
+      // Dono muda qualquer um (exceto transformar alguém em dono);
+      // admin muda só cadastrador e não pode trocar o nível;
+      // cada pessoa pode mexer só no próprio celular e no status online
+      allow update: if (ehDono() && request.auth.uid != uid && request.resource.data.papel in ['admin', 'cadastrador'])
+                    || (ehAdmin() && resource.data.papel == 'cadastrador' && request.resource.data.papel == 'cadastrador')
+                    || (logado() && request.auth.uid == uid && ativo()
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['telefone', 'online', 'ultimoAcesso']));
+      allow delete: if false;
+    }
+
+    // Pastas do Drive: escritas pelo Apps Script (que usa a conta dona do projeto e não passa por estas regras)
+    match /pastas/{id} {
+      allow read: if ehAdmin();
+      allow write: if ehAdmin();
+    }
+
+    // Empresas divididas: cada cadastrador lê só as dele; só admin/dono editam
+    match /empresas/{id} {
+      allow read: if ehAdmin() || (ativo() && resource.data.responsavelUid == request.auth.uid);
+      allow write: if ehAdmin();
+    }
+
+    match /config/instalacao {
+      allow read: if logado();
+      allow create: if logado() && !exists(instalacao())
+                    && getAfter(caminhoPerfil()).data.papel == 'dono';
+      allow update, delete: if false;
+    }
+
+    match /config/{docId} {
+      allow read: if ativo();
+      allow write: if ehAdmin() && docId != 'instalacao';
+    }
+  }
+}
