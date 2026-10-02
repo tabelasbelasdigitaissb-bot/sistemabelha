@@ -2,7 +2,7 @@ import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail,
   createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider,
-  RecaptchaVerifier, signInWithPhoneNumber, linkWithPhoneNumber, unlink
+  RecaptchaVerifier, signInWithPhoneNumber, linkWithPhoneNumber, unlink, setPersistence, browserSessionPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where,
@@ -13,6 +13,8 @@ import { firebaseConfig } from "./firebase-config.js";
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 auth.languageCode = "pt";
+// O login vale só enquanto a aba/janela estiver aberta: fechou, precisa entrar de novo
+const persistencia = setPersistence(auth, browserSessionPersistence).catch(() => {});
 const db = getFirestore(app);
 
 /* ───────────────────────── Constantes ───────────────────────── */
@@ -262,11 +264,11 @@ function telaLogin(modo = "login", msg = null) {
 }
 
 /* ───────────────────────── Sessão ───────────────────────── */
-onAuthStateChanged(auth, async u => {
+persistencia.then(() => onAuthStateChanged(auth, async u => {
   if (S.instalando) return;
   if (!u) { S.user = null; S.perfil = null; telaLogin(); return; }
   await entrar(u);
-});
+}));
 
 async function entrar(u) {
   S.user = u;
