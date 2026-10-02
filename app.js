@@ -25,6 +25,7 @@ const COLS_PRAZOS = [
   { k: "nome", l: "NOME / PASTA", w: 340 },
   { k: "ultimaMexida", l: "DATA ÚLT. MEXIDA", w: 170, centro: true },
   { k: "dias", l: "DIAS PARADO", w: 150 },
+  { k: "prazo", l: "ATUALIZA A CADA", w: 160 },
   { k: "situacao", l: "SITUAÇÃO", w: 170 }
 ];
 const COLS_PESSOA = [
@@ -36,10 +37,11 @@ const COLS_PESSOA = [
   { k: "obs", l: "OBSERVAÇÃO", t: "texto", w: 190 }
 ];
 const ONLINE_MS = 3 * 60 * 1000;
+const OPCOES_PRAZO = [7, 10, 15, 20, 30];
 
 /* ───────────────────────── Estado ───────────────────────── */
 const S = {
-  user: null, perfil: null, usuarios: {}, pastas: {}, empresas: {},
+  user: null, perfil: null, usuarios: {}, pastas: {}, empresas: {}, prazos: {}, sincronizando: false,
   rotulos: { prazos: {}, pessoa: {} }, drive: {},
   aba: null, cat: "Todas", filtro: null, busca: "", ordem: { k: "dias", dir: -1 },
   assinaturas: [], batimento: null, recemSms: false, instalando: false, confirmacao: null
@@ -82,12 +84,18 @@ function diasDesde(s) {
   const h = new Date(); h.setHours(0, 0, 0, 0);
   return Math.max(0, Math.round((h - new Date(a, m - 1, d)) / 86400000));
 }
+// Prazo da pasta: o que a admin escolheu no painel, senão o padrão da categoria
+function prazoDe(p) {
+  const id = p.driveId || p.id;
+  const ajuste = S.prazos[id] && Number(S.prazos[id].dias);
+  return ajuste || Number(p.periodicidade) || 15;
+}
 function statusDe(p) {
   if (p.situacao === "Manutenção") return "manutencao";
   if (p.situacao === "Sem tabela") return "semtabela";
   const d = diasDesde(p.ultimaMexida);
   if (d === null) return "vazia";
-  const per = Number(p.periodicidade) || 15;
+  const per = prazoDe(p);
   if (d > per) return "vermelho";
   if (d > per - 4) return "laranja";
   return "verde";
@@ -332,6 +340,7 @@ function iniciarPainel() {
     vigiar(collection(db, "pastas"), snap => { S.pastas = paraMapa(snap); pedirDesenho(); });
     vigiar(collection(db, "empresas"), snap => { S.empresas = paraMapa(snap); pedirDesenho(); });
     vigiar(collection(db, "users"), snap => { S.usuarios = paraMapa(snap); pedirDesenho(); });
+    vigiar(collection(db, "prazos"), snap => { S.prazos = paraMapa(snap); pedirDesenho(); });
   } else {
     vigiar(query(collection(db, "empresas"), where("responsavelUid", "==", uid)), snap => { S.empresas = paraMapa(snap); pedirDesenho(); });
   }
@@ -384,14 +393,14 @@ function telaPrazos() {
   const base = todas.filter(p => S.cat === "Todas" || p.categoria === S.cat);
   const termo = norm(S.busca);
   const { k, dir } = S.ordem;
-  const chave = p => k === "dias" ? (p.dias ?? -1) : k === "situacao" ? ORDEM[p.status] : k === "ultimaMexida" ? (p.ultimaMexida || "") : norm(p[k]);
+  const chave = p => k === "dias" ? (p.dias ?? -1) : k === "prazo" ? prazoDe(p) : k === "situacao" ? ORDEM[p.status] : k === "ultimaMexida" ? (p.ultimaMexida || "") : norm(p[k]);
   const linhas = base.filter(p => !S.filtro || p.status === S.filtro).filter(p => !termo || norm(p.nome).includes(termo))
     .sort((a, b) => { const x = chave(a), y = chave(b); return (x < y ? -1 : x > y ? 1 : 0) * dir || a.nome.localeCompare(b.nome, "pt-BR"); });
 
   const ult = S.drive.ultimaLeitura ? new Date(S.drive.ultimaLeitura) : null;
   const velha = !ult || Date.now() - ult.getTime() > 2 * 60 * 60 * 1000;
   const info = ult
-    ? `Última leitura do Drive: ${ult.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}. A leitura é automática a cada 30 minutos.`
+    ? `Última leitura do Drive: ${ult.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}. A leitura é automática a cada ${S.drive.intervaloMinutos || 10} minutos.`
     : "O Drive ainda não foi lido. Confira se o Apps Script de sincronização está instalado.";
 
   const cab = COLS_PRAZOS.map(c => {
@@ -405,6 +414,7 @@ function telaPrazos() {
       <td>${p.link ? `<a class="valor" style="display:flex;align-items:center;height:32px;padding:0 8px;color:inherit" href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.nome)}</a>` : `<span class="valor">${esc(p.nome)}</span>`}</td>
       <td class="centro"><span class="valor">${esc(br(p.ultimaMexida)) || "—"}</span></td>
       <td class="forte-${p.status}"><div class="ro">${p.dias === null ? "—" : p.dias + (p.dias === 1 ? " dia" : " dias")}</div></td>
+      <td class="centro">${celulaPrazo(p)}</td>
       <td class="forte-${p.status}"><div class="ro">${ROTULO[p.status]}</div></td></tr>`).join("");
   const largura = 36 + COLS_PRAZOS.reduce((t, c) => t + c.w, 0);
 
@@ -419,10 +429,20 @@ function telaPrazos() {
         return `<button class="chip" data-filtro="${s}" aria-pressed="${S.filtro === s}"><i class="forte-${s}"></i>${FILTRO_ROTULO[s]} ${n}</button>`; }).join("")}</div>
       <input class="busca" type="search" id="campoBusca" placeholder="Procurar pasta" value="${esc(S.busca)}">
     </div>
-    <p class="dica ${velha && ult ? "aviso-leitura" : ""}">${esc(info)}${velha && ult ? " Faz mais de 2 horas: a leitura automática pode ter parado." : ""}</p>
+    <div class="barra-drive"><button class="btn peq principal" data-acao="sincronizar" ${S.sincronizando ? "disabled" : ""}>${S.sincronizando ? "Lendo o Drive…" : "Sincronizar agora"}</button>
+      <span class="drive-info ${velha && ult ? "aviso-leitura" : ""}">${esc(info)}${velha && ult ? " Faz mais de 2 horas: a leitura automática pode ter parado." : ""}</span></div>
     <div class="rolagem"><table class="grade" style="width:${largura}px">
       <thead><tr><th style="width:36px"></th>${cab}</tr></thead>
-      <tbody>${corpo || `<tr><td colspan="5" style="padding:14px;color:var(--suave)">Nenhuma pasta aqui.</td></tr>`}</tbody></table></div>`;
+      <tbody>${corpo || `<tr><td colspan="6" style="padding:14px;color:var(--suave)">Nenhuma pasta aqui.</td></tr>`}</tbody></table></div>`;
+}
+
+function celulaPrazo(p) {
+  const id = p.driveId || p.id;
+  const atual = prazoDe(p);
+  const ajustado = !!(S.prazos[id] && Number(S.prazos[id].dias));
+  const opcoes = [...new Set([...OPCOES_PRAZO, atual])].sort((a, b) => a - b);
+  return `<select data-prazo="${esc(id)}" aria-label="Atualiza a cada quantos dias: ${esc(p.nome)}" title="${ajustado ? "Ajustado no painel" : "Padrão da categoria"}"
+    style="${ajustado ? "font-weight:700" : ""}">${opcoes.map(d => `<option value="${d}" ${d === atual ? "selected" : ""}>${d} dias</option>`).join("")}</select>`;
 }
 
 /* ───── Grades de empresas ───── */
@@ -640,6 +660,14 @@ document.addEventListener("change", async e => {
     setDoc(doc(db, "config", "colunas"), S.rotulos).catch(err => toast(erroTexto(err)));
     return;
   }
+  if (el.dataset.prazo && ehAdmin()) {
+    const dias = Number(el.value);
+    S.prazos[el.dataset.prazo] = { dias };
+    setDoc(doc(db, "prazos", el.dataset.prazo), { dias, alteradoPor: S.user.uid, em: serverTimestamp() })
+      .then(() => toast(`Prazo alterado para ${dias} dias.`)).catch(err => toast(erroTexto(err)));
+    el.blur(); desenhar();
+    return;
+  }
   if (el.dataset.papel && ehDono()) {
     updateDoc(doc(db, "users", el.dataset.papel), { papel: el.value }).then(() => toast("Nível alterado.")).catch(err => toast(erroTexto(err)));
     return;
@@ -725,6 +753,14 @@ document.addEventListener("click", async e => {
     desenhar(); return;
   }
   const acao = t.dataset.acao;
+  if (acao === "sincronizar" && ehAdmin()) {
+    if (!S.drive.urlSincronizar) { toast("O botão ainda não está ligado ao Apps Script. A leitura automática continua funcionando."); return; }
+    S.sincronizando = true; desenhar();
+    try { await fetch(S.drive.urlSincronizar, { mode: "no-cors" }); toast("Drive lido. As pastas foram atualizadas."); }
+    catch (_) { toast("Não consegui pedir a leitura agora. Tente de novo em instantes."); }
+    S.sincronizando = false; desenhar();
+    return;
+  }
   if (acao === "apagarEmpresa" && ehAdmin()) {
     const atual = S.empresas[t.dataset.id];
     if (atual && confirm(`Apagar "${atual.nome}"?`)) {
