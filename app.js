@@ -43,7 +43,7 @@ const OPCOES_PRAZO = [7, 10, 15, 20, 30];
 
 /* ───────────────────────── Estado ───────────────────────── */
 const S = {
-  user: null, perfil: null, usuarios: {}, pastas: {}, empresas: {}, prazos: {}, sincronizando: false, robo: {},
+  user: null, perfil: null, usuarios: {}, pastas: {}, empresas: {}, prazos: {}, sincronizando: false, robo: {}, recados: {}, notas: {},
   rotulos: { prazos: {}, pessoa: {} }, drive: {},
   aba: null, cat: "Todas", filtro: null, busca: "", ordem: { k: "dias", dir: -1 },
   assinaturas: [], batimento: null, recemSms: false, instalando: false, confirmacao: null
@@ -316,7 +316,8 @@ function iniciarPainel() {
     <header class="topo">
       <div class="marca"><img class="logo" src="logo.png" alt="">
         <div><h1>Gestão Abelha</h1><div class="estado" id="quem"></div></div></div>
-      <div class="acoes-topo"><button class="btn" id="btnSair">Sair</button></div>
+      <div class="acoes-topo"><a class="btn principal" href="https://www.sistema-abelha.com.br/login" target="_blank" rel="noopener" style="text-decoration:none">Entrar no Sistema Abelha ↗</a>
+        <button class="btn" id="btnSair">Sair</button></div>
     </header>
     <nav class="secoes" role="tablist" id="abas"></nav>
     <main id="conteudo"></main>`;
@@ -343,9 +344,15 @@ function iniciarPainel() {
     vigiar(collection(db, "users"), snap => { S.usuarios = paraMapa(snap); pedirDesenho(); });
     vigiar(collection(db, "prazos"), snap => { S.prazos = paraMapa(snap); pedirDesenho(); });
     vigiar(doc(db, "robo", "config"), snap => { S.robo = snap.exists() ? snap.data() : {}; pedirDesenho(); });
+    vigiar(collection(db, "anotacoes"), snap => { S.notas = paraMapa(snap); pedirDesenho(); });
   } else {
     vigiar(query(collection(db, "empresas"), where("responsavelUid", "==", uid)), snap => { S.empresas = paraMapa(snap); pedirDesenho(); });
+    vigiar(doc(db, "config", "drive"), snap => { S.drive = snap.exists() ? snap.data() : {}; pedirDesenho(); });
+    vigiar(collection(db, "pastas"), snap => { S.pastas = paraMapa(snap); pedirDesenho(); });
+    vigiar(collection(db, "prazos"), snap => { S.prazos = paraMapa(snap); pedirDesenho(); });
+    vigiar(doc(db, "anotacoes", uid), snap => { S.notas = snap.exists() ? { [uid]: snap.data() } : {}; pedirDesenho(); });
   }
+  vigiar(collection(db, "recados"), snap => { S.recados = paraMapa(snap); pedirDesenho(); });
   // atualiza "dias parado" e o status online sem precisar recarregar
   S.assinaturas.push((() => { const t = setInterval(pedirDesenho, 60 * 1000); return () => clearInterval(t); })());
   desenhar();
@@ -356,7 +363,7 @@ let pendente = false;
 const editando = () => {
   const a = document.activeElement;
   if (a && a.closest && a.closest(".grade, .caixa form") && a.matches("input,select,button")) return true;
-  return [...document.querySelectorAll("#fNovo input, #fRobo input, #fRobo textarea")].some(i => i.value !== i.defaultValue);
+  return [...document.querySelectorAll("#fNovo input, #fRobo input, #fRobo textarea, #fRecado textarea, #fNota textarea")].some(i => i.value !== i.defaultValue);
 };
 function pedirDesenho() { if (editando()) { pendente = true; return; } desenhar(); }
 document.addEventListener("focusout", () => setTimeout(() => { if (pendente && !editando()) { pendente = false; desenhar(); } }, 0));
@@ -371,12 +378,12 @@ function desenhar(foco) {
   const online = Object.values(S.usuarios).filter(estaOnline).length;
   const abas = ehAdmin()
     ? [["prazos", `Pastas do Drive${atrasadas ? `<span class="alerta">${atrasadas}</span>` : ""}`],
-       ["divisao", "Divisão por cadastrador"], ["equipe", `Equipe <small style="font-weight:500">(${online} online)</small>`], ["robo", "Robô WhatsApp"], ["conta", "Minha conta"]]
-    : [["minhas", "Minhas empresas"], ["conta", "Minha conta"]];
+       ["divisao", "Divisão por cadastrador"], ["equipe", `Equipe <small style="font-weight:500">(${online} online)</small>`], ["notas", "Anotações"], ["robo", "Robô WhatsApp"], ["conta", "Minha conta"]]
+    : [["minhas", "Minhas empresas"], ["prazos", `Pastas do Drive${atrasadas ? `<span class="alerta">${atrasadas}</span>` : ""}`], ["notas", "Minhas anotações"], ["conta", "Minha conta"]];
   $("abas").innerHTML = abas.map(([id, t]) => `<button class="secao-btn" role="tab" data-aba="${id}" aria-selected="${S.aba === id}">${t}</button>`).join("");
 
-  const telas = { prazos: telaPrazos, divisao: telaDivisao, equipe: telaEquipe, robo: telaRobo, conta: telaConta, minhas: telaMinhas };
-  $("conteudo").innerHTML = (telas[S.aba] || telaConta)();
+  const telas = { prazos: telaPrazos, divisao: telaDivisao, equipe: telaEquipe, robo: telaRobo, conta: telaConta, minhas: telaMinhas, notas: telaNotas };
+  $("conteudo").innerHTML = blocoRecados() + (telas[S.aba] || telaConta)();
   ligarFormularios();
   if (foco) focar(foco.g, foco.id, foco.c);
 }
@@ -408,7 +415,7 @@ function telaPrazos() {
   const cab = COLS_PRAZOS.map(c => {
     const seta = S.ordem.k === c.k ? (S.ordem.dir > 0 ? "▲" : "▼") : "⇅";
     return `<th style="width:${c.w}px"><div class="cab">
-      <input class="cab-input" data-rotulo="prazos:${c.k}" value="${esc(rotulo("prazos", c))}" aria-label="Nome da coluna" title="Clique para renomear">
+      <input class="cab-input" data-rotulo="prazos:${c.k}" value="${esc(rotulo("prazos", c))}" aria-label="Nome da coluna" ${ehAdmin() ? 'title="Clique para renomear"' : "disabled"}>
       <button class="ordem-btn" data-ordem="${c.k}" title="Ordenar">${seta}</button></div></th>`;
   }).join("");
   const corpo = linhas.map((p, r) => `<tr class="s-${p.status}">
@@ -416,7 +423,7 @@ function telaPrazos() {
       <td>${p.link ? `<a class="valor" style="display:flex;align-items:center;height:32px;padding:0 8px;color:inherit" href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.nome)}</a>` : `<span class="valor">${esc(p.nome)}</span>`}</td>
       <td class="centro"><span class="valor">${esc(br(p.ultimaMexida)) || "—"}</span></td>
       <td class="forte-${p.status}"><div class="ro">${p.dias === null ? "—" : p.dias + (p.dias === 1 ? " dia" : " dias")}</div></td>
-      <td class="centro">${celulaPrazo(p)}</td>
+      <td class="centro">${ehAdmin() ? celulaPrazo(p) : `<span class="valor">${prazoDe(p)} dias</span>`}</td>
       <td class="forte-${p.status}"><div class="ro">${ROTULO[p.status]}</div></td></tr>`).join("");
   const largura = 36 + COLS_PRAZOS.reduce((t, c) => t + c.w, 0);
 
@@ -431,7 +438,7 @@ function telaPrazos() {
         return `<button class="chip" data-filtro="${s}" aria-pressed="${S.filtro === s}"><i class="forte-${s}"></i>${FILTRO_ROTULO[s]} ${n}</button>`; }).join("")}</div>
       <input class="busca" type="search" id="campoBusca" placeholder="Procurar pasta" value="${esc(S.busca)}">
     </div>
-    <div class="barra-drive"><button class="btn peq principal" data-acao="sincronizar" ${S.sincronizando ? "disabled" : ""}>${S.sincronizando ? "Lendo o Drive…" : "Sincronizar agora"}</button>
+    <div class="barra-drive">${ehAdmin() ? `<button class="btn peq principal" data-acao="sincronizar" ${S.sincronizando ? "disabled" : ""}>${S.sincronizando ? "Lendo o Drive…" : "Sincronizar agora"}</button>` : ""}
       <span class="drive-info ${velha && ult ? "aviso-leitura" : ""}">${esc(info)}${velha && ult ? " Faz mais de 2 horas: a leitura automática pode ter parado." : ""}</span></div>
     <div class="rolagem"><table class="grade" style="width:${largura}px">
       <thead><tr><th style="width:36px"></th>${cab}</tr></thead>
@@ -542,6 +549,42 @@ function telaEquipe() {
     </section></div>`;
 }
 
+/* ───── Mural de recados (admins escrevem, todos veem) ───── */
+const quando = t => t && t.toDate ? t.toDate().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "";
+function blocoRecados() {
+  const lista = Object.entries(S.recados).map(([id, r]) => ({ id, ...r }))
+    .sort((a, b) => (b.em && b.em.toMillis ? b.em.toMillis() : Date.now()) - (a.em && a.em.toMillis ? a.em.toMillis() : Date.now()));
+  if (!lista.length && !ehAdmin()) return "";
+  return `<section class="recados">
+    <div class="recados-topo"><b>📌 Recados</b>${ehAdmin() ? `<span class="ajuda">Aparecem para toda a equipe, no topo de todas as telas.</span>` : ""}</div>
+    ${lista.map(r => `<div class="recado"><div style="white-space:pre-wrap">${esc(r.texto)}</div>
+      <small>${esc(r.autor || "")}${r.em ? " · " + esc(quando(r.em)) : ""}</small>
+      ${ehAdmin() ? `<button class="link" data-acao="apagarRecado" data-id="${esc(r.id)}" style="font-size:12px">apagar</button>` : ""}</div>`).join("")}
+    ${ehAdmin() ? `<form id="fRecado" class="recado-form"><textarea id="tRecado" rows="2" placeholder="Escreva um recado ou lembrete para a equipe" required></textarea>
+      <button class="btn principal peq" type="submit">Publicar</button></form>` : ""}
+  </section>`;
+}
+
+/* ───── Anotações (cada pessoa escreve as suas; admins veem todas) ───── */
+function telaNotas() {
+  const minha = (S.notas[S.user.uid] || {}).texto || "";
+  const outras = ehAdmin() ? Object.entries(S.notas).filter(([uid, n]) => uid !== S.user.uid && (n.texto || "").trim())
+    .map(([uid, n]) => ({ uid, ...n, nome: (S.usuarios[uid] || {}).nome || n.nome || "—" }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")) : [];
+  return `<div class="painel">
+    <section class="caixa"><h2>Minhas anotações</h2>
+      <p class="ajuda" style="margin-bottom:10px">Anote aqui informações importantes do seu dia a dia. ${ehAdmin() ? "" : "A Carol e o super admin também conseguem ler."}</p>
+      <form class="form" id="fNota"><textarea id="tNota" rows="8" style="border:1px solid var(--linha);background:var(--superficie2);border-radius:8px;padding:10px 12px">${esc(minha)}</textarea>
+        <div class="botoes"><button class="btn principal" type="submit">Salvar anotações</button>
+        <span class="ajuda">${(S.notas[S.user.uid] || {}).em ? "Salvo em " + esc(quando(S.notas[S.user.uid].em)) : ""}</span></div></form>
+    </section>
+    ${ehAdmin() ? `<section class="caixa"><h2>Anotações da equipe</h2>
+      ${outras.length ? outras.map(n => `<div class="recado"><b>${esc(n.nome)}</b><div style="white-space:pre-wrap;margin-top:4px">${esc(n.texto)}</div><small>${n.em ? "Atualizado em " + esc(quando(n.em)) : ""}</small></div>`).join("")
+        : `<p class="ajuda">Ninguém da equipe escreveu anotações ainda.</p>`}
+    </section>` : ""}
+  </div>`;
+}
+
 /* ───── Robô WhatsApp (só super admin e admin) ───── */
 const MSG_PADRAO = "Oi, {nome}! 🐝 Lembrete do Gestão Abelha: estas pastas precisam de atualização:\n{lista}\nQualquer dúvida, fale com a Carol.";
 function telaRobo() {
@@ -641,6 +684,24 @@ function ligarFormularios() {
       await S.confirmacaoCel.confirm($("cCelCodigo").value.trim());
       await updateDoc(doc(db, "users", S.user.uid), { telefone: S.telPendente });
       S.confirmacaoCel = null; toast("Celular confirmado."); desenhar();
+    } catch (err) { toast(erroTexto(err)); }
+  };
+  const fRecado = $("fRecado");
+  if (fRecado) fRecado.onsubmit = async e => {
+    e.preventDefault();
+    const texto = $("tRecado").value.trim();
+    if (!texto) return;
+    try {
+      await setDoc(doc(collection(db, "recados")), { texto, autor: S.perfil.nome || "", autorUid: S.user.uid, em: serverTimestamp() });
+      $("tRecado").value = ""; toast("Recado publicado."); desenhar();
+    } catch (err) { toast(erroTexto(err)); }
+  };
+  const fNota = $("fNota");
+  if (fNota) fNota.onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await setDoc(doc(db, "anotacoes", S.user.uid), { texto: $("tNota").value, nome: S.perfil.nome || "", em: serverTimestamp() });
+      $("tNota").defaultValue = $("tNota").value; toast("Anotações salvas."); desenhar();
     } catch (err) { toast(erroTexto(err)); }
   };
   const fRobo = $("fRobo");
@@ -849,6 +910,10 @@ document.addEventListener("click", async e => {
     try { await fetch(S.drive.urlSincronizar, { mode: "no-cors" }); toast("Drive lido. As pastas foram atualizadas."); }
     catch (_) { toast("Não consegui pedir a leitura agora. Tente de novo em instantes."); }
     S.sincronizando = false; desenhar();
+    return;
+  }
+  if (acao === "apagarRecado" && ehAdmin()) {
+    if (confirm("Apagar este recado?")) deleteDoc(doc(db, "recados", t.dataset.id)).catch(err => toast(erroTexto(err)));
     return;
   }
   if (acao === "apagarEmpresa" && ehAdmin()) {
